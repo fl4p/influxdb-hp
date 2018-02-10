@@ -4,3 +4,12 @@
 [submodule "mongoose"]
 	path = mongoose
 	url = https://github.com/cesanta/mongoose
+[submodule "evpp"]
+	path = evpp
+	url = https://github.com/Qihoo360/evpp
+[submodule "libevent"]
+	path = libevent
+	url = https://github.com/libevent/libevent
+[submodule "date"]
+	path = date
+	url = https://github.com/HowardHinnant/date
