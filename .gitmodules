@@ -1,0 +1,6 @@
+[submodule "rapidjson"]
+	path = rapidjson
+	url = https://github.com/Tencent/rapidjson
+[submodule "mongoose"]
+	path = mongoose
+	url = https://github.com/cesanta/mongoose
