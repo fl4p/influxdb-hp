@@ -22,11 +22,12 @@ namespace influxdb {
         struct fetchResult {
             std::vector<std::string> columns;
             std::vector<float> data;
+            int num = 0;
         };
 
-        fetchResult fetch(const std::string &sql, const std::array<std::string,2> &&timeRange, const std::vector<std::string> &&args);
+        fetchResult fetch(const std::string &sql, const std::array<std::string,2> timeRange, const std::vector<std::string> &&args);
 
-        std::vector<std::string> queryTags(const std::string &sql);
+        std::vector<std::string> queryTags(const std::string &sql, const std::vector<std::string> &&args = {});
         void  query(const std::string &sql);
 
         std::future<void> queryRaw(const std::string &sql, std::function<void(const char *, size_t)> &&callback);

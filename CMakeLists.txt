@@ -1,8 +1,9 @@
 cmake_minimum_required (VERSION 3.1)
 project (influxdb-hp)
 
+set(CMAKE_CXX_FLAGS_RELEASE "-O3")
 
-#set(EVENT__DISABLE_OPENSSL ON CACHE BOOL "EVENT__DISABLE_OPENSSL" FORCE)
+set(EVENT__DISABLE_OPENSSL ON CACHE BOOL "EVENT__DISABLE_OPENSSL" FORCE)
 add_subdirectory(libevent)
 
 add_subdirectory(rapidjson)
