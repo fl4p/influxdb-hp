@@ -6,7 +6,7 @@
 	url = https://github.com/cesanta/mongoose
 [submodule "evpp"]
 	path = evpp
-	url = https://github.com/Qihoo360/evpp
+	url = https://github.com/f4bsch/evpp
 [submodule "libevent"]
 	path = libevent
 	url = https://github.com/libevent/libevent
