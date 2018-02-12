@@ -4,7 +4,8 @@
 #include <sstream>
 #include <iomanip>
 
-#include <date/date.h>
+//#include <date/date.h>
+#include "../date/include/date/date.h"
 
 namespace influxdb {
     namespace util {
@@ -67,7 +68,7 @@ namespace influxdb {
         */
 
 
-        date::sys_time<std::chrono::milliseconds>
+        static date::sys_time<std::chrono::milliseconds>
         parse8601(std::istream&& is)
         {
             std::string save;
@@ -90,12 +91,17 @@ namespace influxdb {
             return parse8601(istringstream{str});
         }
 
-        std::string to8601(const date::sys_time<std::chrono::milliseconds> &tp) {
+        inline std::string to8601(const date::sys_time<std::chrono::milliseconds> &tp) {
             return date::format("%FT%TZ", tp);
         }
 
+       inline std::string to8601(int64_t epochMs) {
+            const static date::sys_time<std::chrono::milliseconds> tp_epoch;
+            return to8601(tp_epoch + std::chrono::milliseconds(epochMs));
+        }
 
-        bool replace(std::string& str, const std::string& from, const std::string& to) {
+
+        static bool replace(std::string& str, const std::string& from, const std::string& to) {
             size_t start_pos = str.find(from);
             if(start_pos == std::string::npos)
                 return false;
@@ -104,8 +110,8 @@ namespace influxdb {
         }
     }
 
-    static int wsaStart() {
-#ifdef _WIN32
+    inline int wsaStart() {
+#if defined(_WIN32) && defined(MAKEWORD)
         WORD wVersionRequested;
         WSADATA wsaData;
         wVersionRequested = MAKEWORD(2, 2);

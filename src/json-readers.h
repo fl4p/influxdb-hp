@@ -1,11 +1,12 @@
 #pragma once
 
 #include "rapidjson/reader.h"
+#include "client.h"
 
 namespace {
     using namespace rapidjson;
     using namespace std;
-
+    using  namespace influxdb;
 struct ColumnReader {
     bool inColArray = false;
     std::vector<std::string> columns;
@@ -49,14 +50,16 @@ struct ColumnReader {
 
 struct DataReader {
     const int numColumns;
-    std::vector<float> &buf;
+
+
+    client::fetchResult &result;
     int inDataArray = 0;
     int colIndex = 0;
 
     uint64_t rowTime; //unused!
 
 
-    DataReader(size_t numColumns, std::vector<float> &buf) : numColumns((int) numColumns), buf(buf) {
+    DataReader(size_t numColumns, client::fetchResult &res) : numColumns((int) numColumns), result(res) {
     }
 
 
@@ -74,8 +77,8 @@ struct DataReader {
 
     bool Uint64(uint64_t u) {
         if (inDataArray == 3) {
-            if (colIndex == 0) rowTime = u;
-            else  buf.push_back(u);
+            if (colIndex == 0) result.time.push_back(u);
+            else  result.data.push_back(u);
             ++colIndex;
         }
         return true;
@@ -83,7 +86,7 @@ struct DataReader {
 
     bool Double(double d) {
         if (inDataArray == 3) {
-            if (colIndex > 0) buf.push_back(d);
+            if (colIndex > 0) result.data.push_back(d);
             else throw std::runtime_error("unexpected double");
             ++colIndex;
         }
@@ -92,7 +95,7 @@ struct DataReader {
 
     bool Uint(unsigned u) {
         if (inDataArray == 3) {
-            if (colIndex > 0) buf.push_back(u);
+            if (colIndex > 0) result.data.push_back(u);
             else throw std::runtime_error("unexpected double");
             ++colIndex;
         }
@@ -102,8 +105,8 @@ struct DataReader {
     bool Null() {
         if (inDataArray == 3) {
             if (colIndex > 0) {
-                buf.push_back(
-                        (buf.size() < (numColumns - 1)) ? NAN : buf[buf.size() - (numColumns - 1)]); // repeat last
+                result.data.push_back(
+                        (result.data.size() < (numColumns - 1)) ? NAN : result.data[result.data.size() - (numColumns - 1)]); // repeat last
             } else throw std::runtime_error("unexpected null");
             ++colIndex;
         }

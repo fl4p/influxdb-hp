@@ -58,45 +58,54 @@ namespace influxdb {
     client::fetchResult client::fetch(const std::string &sql, const std::array<std::string, 2> timeRange,
                                       const std::vector<std::string> &&args) {
         using namespace std::chrono;
+        using namespace util;
         auto t0 = util::parse8601(timeRange[0]), t1 = util::parse8601(timeRange[1]);
-        int batches = (int) std::ceil(milliseconds(t1 - t0).count() / (float) milliseconds(batchTime).count());
+        size_t batches = (size_t) std::ceil(milliseconds(t1 - t0).count() / (float) milliseconds(batchTime).count());
 
         auto fsql = sqlArgs(sql, args);
 
         std::vector<std::future<void>> futs;
-        fetchResult result;
+        std::vector<std::string> columns;
+        std::vector<fetchResult> results{batches};
+        //fetchResult result;
 
         for (int bi = 0; bi < batches; ++bi) {
             auto bsql = fsql;
             auto bt = batchTime0(t0 + batchTime * bi, batchTime);
-            auto bt0 = (bi == 0) ? t0 : bt;
-            auto bt1 = std::min({bt + batchTime, t1});
+            auto bt0 = (bi == 0) ? t0 : bt, bt1 = std::min({bt + batchTime, t1});
             auto eo = bi < (batches - 1) ? "<" : "<=";
-            util::replace(bsql, ":time_condition:",
-                          "time >= '" + util::to8601(bt0) + "' AND time " + eo + " '" + util::to8601(bt1) + "'");
-            futs.emplace_back(queryRaw(bsql, [&result](const char *body, size_t len) {
+            replace(bsql, ":time_condition:",
+                    "time >= '" + to8601(bt0) + "' AND time " + eo + " '" + to8601(bt1) + "'");
+
+            // with batching responses can arrive out-of-order!
+            futs.emplace_back(queryRaw(bsql, [&columns, &results, bi](const char *body, size_t len) {
                 rapidjson::Reader reader;
 
-                if (result.columns.size() == 0) {
+                if (columns.size() == 0) {
                     // capture columns
                     ColumnReader colsReader;
                     {
                         rapidjson::StringStream ss(body);
                         reader.Parse(ss, colsReader);
                     }
-                    result.columns = colsReader.columns;
+                    columns = colsReader.columns;
                     //if(result.columns.size() == 0)
                     //    throw std::runtime_error("empty columns array");
                 }
 
-                if (result.columns.size() != 0) {
-                    DataReader dataReader{result.columns.size(), result.data};
+                if (columns.size() != 0) {
+                    auto &result(results[bi]);
+                    DataReader dataReader{columns.size(), result};
                     rapidjson::StringStream ss(body);
                     reader.Parse(ss, dataReader);
-                    if(result.data.size() % (result.columns.size()-1)) {
+                    if (result.data.size() % (columns.size() - 1)) {
                         throw std::runtime_error("unexpected data len");
                     }
-                    result.num = result.data.size() / (result.columns.size()-1);
+                    result.num = result.data.size() / (columns.size() - 1);
+
+                    if (result.num != result.time.size()) {
+                        throw std::runtime_error("unexpected time len");
+                    }
                 }
             }));
         }
@@ -105,7 +114,29 @@ namespace influxdb {
             fut.wait();
         }
 
-        return result;
+        // merge
+        std::sort(results.begin(), results.end(), [](const fetchResult &a, const fetchResult &b) {
+            if (a.time.empty()) return true;
+            if (b.time.empty()) return false;
+            return a.time[0] < b.time[0];
+        });
+
+        fetchResult resultMerged;
+        for (auto &r : results) resultMerged.num += r.num;
+
+        size_t numDataCols = (columns.size() - 1);
+        resultMerged.columns = columns;
+        resultMerged.time.resize(resultMerged.num);
+        resultMerged.data.resize(resultMerged.num * numDataCols);
+
+        size_t offset = 0;
+        for (auto &r : results) {
+            std::move(r.time.begin(), r.time.end(), resultMerged.time.begin() + offset);
+            std::move(r.data.begin(), r.data.end(), resultMerged.data.begin() + (offset * numDataCols));
+            offset += r.num;
+        }
+
+        return resultMerged;
     }
 
 
