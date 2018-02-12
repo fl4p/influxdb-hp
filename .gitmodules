@@ -4,12 +4,12 @@
 [submodule "mongoose"]
 	path = mongoose
 	url = https://github.com/cesanta/mongoose
-[submodule "evpp"]
-	path = evpp
-	url = https://github.com/f4bsch/evpp
-[submodule "libevent"]
-	path = libevent
-	url = https://github.com/libevent/libevent
 [submodule "date"]
 	path = date
 	url = https://github.com/HowardHinnant/date
+[submodule "libevent"]
+	path = libevent
+	url = https://github.com/libevent/libevent
+[submodule "evpp"]
+	path = evpp
+	url = https://github.com/f4bsch/evpp
