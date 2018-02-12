@@ -14,6 +14,7 @@
 #include "client.h"
 #include "util.h"
 #include "json-readers.h"
+#include "../../pclog/pclog.h"
 #include <future>
 #include <rapidjson/document.h>
 #include <rapidjson/stringbuffer.h>
@@ -176,10 +177,14 @@ namespace influxdb {
 
         std::shared_ptr<t_promise> result_promise = std::make_shared<t_promise>();
 
+        r->set_retry_interval(evpp::Duration(2.0));
+        r->set_retry_number(10);
         r->Execute([result_promise, callback](const t_resp &response) {
             auto hc = response->http_code();
             try {
                 if (hc != 200) {
+                    std::cerr << "http error " << hc << std::endl;
+
                     // r->Execute(std::bind(&HandleHTTPResponse, std::placeholders::_1, req));
                     throw std::runtime_error("http error " + std::to_string(hc) + " " + response->body().ToString());
                 }

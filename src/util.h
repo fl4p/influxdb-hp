@@ -73,17 +73,22 @@ namespace influxdb {
         {
             std::string save;
             is >> save;
-            std::istringstream in{save};
-            date::sys_time<std::chrono::milliseconds> tp;
-            in >> date::parse("%FT%TZ", tp);
-            if (in.fail())
-            {
-                in.clear();
-                in.exceptions(std::ios::failbit);
-                in.str(save);
-                in >> date::parse("%FT%T%Ez", tp);
+
+            try {
+
+                std::istringstream in{save};
+                date::sys_time<std::chrono::milliseconds> tp;
+                in >> date::parse("%FT%TZ", tp);
+                if (in.fail()) {
+                    in.clear();
+                    in.exceptions(std::ios::failbit);
+                    in.str(save);
+                    in >> date::parse("%FT%T%Ez", tp);
+                }
+                return tp;
+            } catch (const std::exception &e) {
+                throw std::runtime_error("parse8601('" + save + "') failed");
             }
-            return tp;
         }
 
         inline date::sys_time<std::chrono::milliseconds>
