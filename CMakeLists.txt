@@ -16,7 +16,7 @@ add_subdirectory(rapidjson)
 
 add_library(influxdb-hp include/client.h src/client.cpp src/util.h src/json-readers.h)
 
-add_compile_options(-Wno-builtin-macro-redefined -Wp,-w)
+#add_compile_options(-Wno-builtin-macro-redefined -Wp,-w)
 
 set(EVPP_VCPKG_BUILD ON CACHE BOOL "EVPP_VCPKG_BUILD" FORCE)
 add_subdirectory(evpp)

@@ -10,6 +10,7 @@
 #include <evpp/httpc/response.h>
 #include <cmath>
 #include <future>
+#include <array>
 
 #include "client.h"
 #include "util.h"
