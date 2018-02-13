@@ -118,7 +118,7 @@ namespace influxdb {
 
         // merge
         std::sort(results.begin(), results.end(), [](const fetchResult &a, const fetchResult &b) {
-            if (a.time.empty()) return true;
+            if (a.time.empty()) return b.time.empty();
             if (b.time.empty()) return false;
             return a.time[0] < b.time[0];
         });
