@@ -34,6 +34,17 @@ batchTime0(date::sys_time<std::chrono::milliseconds> &&tp, std::chrono::millisec
 
 }
 
+void throwQueryError(Document &d, const std::string &sql) {
+    if(d.HasParseError()) {
+        throw std::runtime_error("response parse error");
+    }
+    if(!d.HasMember("results")) {
+        throw std::runtime_error("response has no results member");
+    }
+    if(d["results"][0].HasMember("error")) {
+        throw std::runtime_error("influxdb error: " + std::string(d["results"][0]["error"].GetString()) + ", SQL \"" + sql + "\"");
+    }
+}
 
 namespace influxdb {
     std::string sqlArgs(std::string sql, const std::vector<std::string> &args) {
@@ -103,7 +114,9 @@ namespace influxdb {
                     if (result.data.size() % (columns.size() - 1)) {
                         throw std::runtime_error("unexpected data len");
                     }
-                    result.num = result.data.size() / (columns.size() - 1);
+
+                    result.dataStride = (columns.size() - 1);
+                    result.num = result.data.size() / result.dataStride;
 
                     if (result.num != result.time.size()) {
                         throw std::runtime_error("unexpected time len");
@@ -126,15 +139,15 @@ namespace influxdb {
         fetchResult resultMerged;
         for (auto &r : results) resultMerged.num += r.num;
 
-        size_t numDataCols = (columns.size() - 1);
+        resultMerged.dataStride = (columns.size() - 1);
         resultMerged.columns = columns;
         resultMerged.time.resize(resultMerged.num);
-        resultMerged.data.resize(resultMerged.num * numDataCols);
+        resultMerged.data.resize(resultMerged.num * resultMerged.dataStride);
 
         size_t offset = 0;
         for (auto &r : results) {
             std::move(r.time.begin(), r.time.end(), resultMerged.time.begin() + offset);
-            std::move(r.data.begin(), r.data.end(), resultMerged.data.begin() + (offset * numDataCols));
+            std::move(r.data.begin(), r.data.end(), resultMerged.data.begin() + (offset * resultMerged.dataStride));
             offset += r.num;
         }
 
@@ -200,13 +213,15 @@ namespace influxdb {
     }
 
 
+
     std::vector<std::string> client::queryTags(const std::string &sql, const std::vector<std::string> &&args) {
         Document d;
-        queryRaw(sqlArgs(sql, args), [&](const char *body, size_t len) {
-            if (d.Parse(body, len).HasParseError()) {
-                std::cerr << "json parse error" << std::endl;
-            }
+        auto sqlFilled = sqlArgs(sql, args);
+        queryRaw(sqlFilled, [&](const char *body, size_t len) {
+            d.Parse(body, len);
         }).wait();
+
+        throwQueryError(d, sqlFilled);
 
         auto &series = d["results"][0]["series"];
         std::vector<std::string> tags;

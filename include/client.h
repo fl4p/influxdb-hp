@@ -32,6 +32,7 @@ namespace influxdb {
             std::vector<float> data;
             std::vector<uint64_t> time;
             size_t num = 0;
+            size_t dataStride = 0;
         };
 
         fetchResult fetch(const std::string &sql, const std::array<std::string, 2> timeRange,
