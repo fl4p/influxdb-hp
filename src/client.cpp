@@ -21,7 +21,6 @@
 #include <rapidjson/stringbuffer.h>
 #include <rapidjson/writer.h>
 
-
 date::sys_time<std::chrono::milliseconds>
 batchTime0(date::sys_time<std::chrono::milliseconds> &&tp, std::chrono::milliseconds &batchTime) {
     using namespace std::chrono;
@@ -35,14 +34,15 @@ batchTime0(date::sys_time<std::chrono::milliseconds> &&tp, std::chrono::millisec
 }
 
 void throwQueryError(Document &d, const std::string &sql) {
-    if(d.HasParseError()) {
+    if (d.HasParseError()) {
         throw std::runtime_error("response parse error");
     }
-    if(!d.HasMember("results")) {
+    if (!d.HasMember("results")) {
         throw std::runtime_error("response has no results member");
     }
-    if(d["results"][0].HasMember("error")) {
-        throw std::runtime_error("influxdb error: " + std::string(d["results"][0]["error"].GetString()) + ", SQL \"" + sql + "\"");
+    if (d["results"][0].HasMember("error")) {
+        throw std::runtime_error(
+                "influxdb error: " + std::string(d["results"][0]["error"].GetString()) + ", SQL \"" + sql + "\"");
     }
 }
 
@@ -68,10 +68,13 @@ namespace influxdb {
     }
 
 
-    client::fetchResult client::fetch(const std::string &sql, const std::array<std::string, 2> timeRange,
-                                      const std::vector<std::string> &&args) {
+    client::fetchResult
+    client::fetch(const std::string &sql, std::array<std::string, 2> timeRange,
+                  const std::vector<std::string> &&args) {
         using namespace std::chrono;
         using namespace util;
+        if (timeRange[0].find('T') == std::string::npos) timeRange[0] += "T00:00:00.000Z";
+        if (timeRange[1].find('T') == std::string::npos) timeRange[1] += "T00:00:00.000Z";
         auto t0 = util::parse8601(timeRange[0]), t1 = util::parse8601(timeRange[1]);
         size_t batches = (size_t) std::ceil(milliseconds(t1 - t0).count() / (float) milliseconds(batchTime).count());
 
@@ -80,7 +83,6 @@ namespace influxdb {
         std::vector<std::future<void>> futs;
         std::vector<std::string> columns;
         std::vector<fetchResult> results{batches};
-        //fetchResult result;
 
         for (int bi = 0; bi < batches; ++bi) {
             auto bsql = fsql;
@@ -88,7 +90,7 @@ namespace influxdb {
             auto bt0 = (bi == 0) ? t0 : bt, bt1 = std::min({bt + batchTime, t1});
             auto eo = bi < (batches - 1) ? "<" : "<=";
             replace(bsql, ":time_condition:",
-                    "time >= '" + to8601(bt0) + "' AND time " + eo + " '" + to8601(bt1) + "'");
+                    "(time >= '" + to8601(bt0) + "' AND time " + eo + " '" + to8601(bt1) + "')");
 
             // with batching responses can arrive out-of-order!
             futs.emplace_back(queryRaw(bsql, [&columns, &results, bi](const char *body, size_t len) {
@@ -129,9 +131,10 @@ namespace influxdb {
             fut.wait();
         }
 
-        // merge
+        // sorted merge
         std::sort(results.begin(), results.end(), [](const fetchResult &a, const fetchResult &b) {
-            if (a.time.empty()) return b.time.empty();
+            if (a.time.empty() && b.time.empty()) return false;
+            if (a.time.empty()) return true;
             if (b.time.empty()) return false;
             return a.time[0] < b.time[0];
         });
@@ -184,16 +187,16 @@ namespace influxdb {
     std::future<void> client::queryRaw(const std::string &sql, std::function<void(const char *, size_t)> &&callback) {
         // std::cout << sql << std::endl;
         auto path = "/query?pretty=false&db=" + dbName + "&epoch=ms&q=" + util::urlEncode(sql);
-        auto *r = new evpp::httpc::GetRequest(pool.get(), t->loop(), path);
+        auto req = std::make_shared<evpp::httpc::GetRequest>(pool.get(), t->loop(), path);
 
         typedef std::promise<void> t_promise;
         typedef std::shared_ptr<evpp::httpc::Response> t_resp;
 
         std::shared_ptr<t_promise> result_promise = std::make_shared<t_promise>();
 
-        r->set_retry_interval(evpp::Duration(2.0));
-        r->set_retry_number(10);
-        r->Execute([result_promise, callback](const t_resp &response) {
+        req->set_retry_interval(evpp::Duration(2.0));
+        req->set_retry_number(10);
+        req->Execute([result_promise, callback, req](const t_resp &response) {
             auto hc = response->http_code();
             try {
                 if (hc != 200) {
@@ -207,14 +210,14 @@ namespace influxdb {
             } catch (...) {
                 result_promise->set_exception(std::current_exception());
             }
+            req.get(); // hacky ptr capture
         });
 
         return std::move(result_promise->get_future());
     }
 
 
-
-    std::vector<std::string> client::queryTags(const std::string &sql, const std::vector<std::string> &&args) {
+    std::set<std::string> client::queryTags(const std::string &sql, const std::vector<std::string> &&args) {
         Document d;
         auto sqlFilled = sqlArgs(sql, args);
         queryRaw(sqlFilled, [&](const char *body, size_t len) {
@@ -224,37 +227,13 @@ namespace influxdb {
         throwQueryError(d, sqlFilled);
 
         auto &series = d["results"][0]["series"];
-        std::vector<std::string> tags;
+        std::set<std::string> tags;
         for (int i = 0; i < series.Size(); i++) {
-            tags.emplace_back(series[i]["tags"].MemberBegin()->value.GetString());
+            tags.insert(series[i]["tags"].MemberBegin()->value.GetString());
         }
 
         return tags;
     }
 
-    void
-    client::HandleHTTPResponse(const std::shared_ptr<evpp::httpc::Response> &response,
-                               evpp::httpc::GetRequest *request, std::promise<const char *> &promise) {
-        auto hc = response->http_code();
-
-
-        try {
-            promise.set_value(response->body().data());
-        } catch (...) {
-            promise.set_exception(std::current_exception());
-        }
-
-
-        auto b = response->body().ToString();
-        // LOG_INFO << "http_code=" << response->http_code() << " [" << response->body().ToString() << "]";
-        std::string header = response->FindHeader("Connection");
-        // LOG_INFO << "HTTP HEADER Connection=" << header;
-
-        // retry:
-        //  req->Execute(std::bind(&HandleHTTPResponse, std::placeholders::_1, req));
-        //responsed = true;
-        assert(request == response->request());
-        delete request; // The request MUST BE deleted in EventLoop thread.
-    }
 }
 

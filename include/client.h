@@ -4,6 +4,7 @@
 #include <functional>
 #include <future>
 #include <vector>
+#include <set>
 
 namespace evpp {
     class EventLoopThread;
@@ -35,24 +36,28 @@ namespace influxdb {
             size_t dataStride = 0;
         };
 
-        fetchResult fetch(const std::string &sql, const std::array<std::string, 2> timeRange,
-                          const std::vector<std::string> &&args);
+        /**
+         * Fetches points for given time range of a single series using batched, async IO requests.
+         * Just put `:time_condition:` in the WHERE clause.
+         * @param sql
+         * @param timeRange time interval, inclusive, ISO strings
+         * @param args
+         * @return
+         */
+        fetchResult
+        fetch(const std::string &sql, std::array<std::string, 2> timeRange, const std::vector<std::string> &&args);
 
-        std::vector<std::string> queryTags(const std::string &sql, const std::vector<std::string> &&args = {});
+        std::set<std::string> queryTags(const std::string &sql, const std::vector<std::string> &&args = {});
 
         template<std::size_t N>
         std::vector<std::string> queryTags(const std::string &sql, const std::array<std::string, N> &args) {
             queryTags(sql, {args.begin(), args.end()});
         }
 
-        void query(const std::string &sql);
 
         std::future<void> queryRaw(const std::string &sql, std::function<void(const char *, size_t)> &&callback);
 
         std::future<const char *> queryRaw(const std::string &sql);
 
-        static void
-        HandleHTTPResponse(const std::shared_ptr<evpp::httpc::Response> &response, evpp::httpc::GetRequest *request,
-                           std::promise<const char *> &promise);
     };
 };
