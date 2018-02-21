@@ -5,7 +5,9 @@ set(CMAKE_CXX_FLAGS_RELEASE "-O3")
 
 if (WIN32)
     set(EVENT__DISABLE_OPENSSL ON CACHE BOOL "EVENT__DISABLE_OPENSSL" FORCE)
-    add_definitions(-DEVENT__HAVE_STRTOK_R)
+	if(MINGW)
+		add_definitions(-DEVENT__HAVE_STRTOK_R)
+	endif()
     add_subdirectory(libevent)
     include_directories(libevent/include libevent/WIN32-Code/nmake)
 endif ()
@@ -23,7 +25,11 @@ set(EVPP_VCPKG_BUILD ON CACHE BOOL "EVPP_VCPKG_BUILD" FORCE)
 add_subdirectory(evpp)
 
 target_link_libraries(influxdb evpp_static)
-target_link_libraries(influxdb_shared evpp)
+if(WIN32 AND NOT MINGW)
+	target_link_libraries(influxdb_shared evpp_static event_static)
+else()
+	target_link_libraries(influxdb_shared evpp)
+endif()
 
 
 if (WIN32)
