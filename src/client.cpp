@@ -67,7 +67,6 @@ namespace influxdb {
         t->Stop(true);
     }
 
-
     client::fetchResult
     client::fetch(const std::string &sql, std::array<std::string, 2> timeRange,
                   const std::vector<std::string> &&args) {
@@ -215,7 +214,6 @@ namespace influxdb {
 
         return std::move(result_promise->get_future());
     }
-
 
     std::set<std::string> client::queryTags(const std::string &sql, const std::vector<std::string> &&args) {
         Document d;
