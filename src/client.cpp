@@ -186,7 +186,8 @@ namespace influxdb {
     std::future<void> client::queryRaw(const std::string &sql, std::function<void(const char *, size_t)> &&callback) {
         // std::cout << sql << std::endl;
         auto path = "/query?pretty=false&db=" + dbName + "&epoch=ms&q=" + util::urlEncode(sql);
-        auto req = std::make_shared<evpp::httpc::GetRequest>(pool.get(), t->loop(), path);
+       // auto req = std::make_shared<evpp::httpc::GetRequest>(pool.get(), t->loop(), path);
+        auto req = new evpp::httpc::GetRequest(pool.get(), t->loop(), path);
 
         typedef std::promise<void> t_promise;
         typedef std::shared_ptr<evpp::httpc::Response> t_resp;
@@ -209,7 +210,8 @@ namespace influxdb {
             } catch (...) {
                 result_promise->set_exception(std::current_exception());
             }
-            req.get(); // hacky ptr capture
+            //req.get(); // hacky ptr capture
+            delete req;
         });
 
         return std::move(result_promise->get_future());
