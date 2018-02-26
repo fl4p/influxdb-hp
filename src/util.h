@@ -105,6 +105,14 @@ namespace influxdb {
             return to8601(tp_epoch + std::chrono::milliseconds(epochMs));
         }
 
+        inline std::string to8601(const std::chrono::time_point<std::chrono::milliseconds> &tp) {
+            return to8601(tp.time_since_epoch().count());
+        }
+
+
+        inline std::string to8601(const std::chrono::system_clock::time_point &tp) {
+            return to8601(std::chrono::duration_cast<std::chrono::milliseconds>(tp.time_since_epoch()).count());
+        }
 
         static bool replace(std::string& str, const std::string& from, const std::string& to) {
             size_t start_pos = str.find(from);
