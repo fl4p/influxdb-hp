@@ -71,7 +71,9 @@ namespace influxdb {
     client::fetch(const std::string &sql, std::array<std::string, 2> timeRange,
                   const std::vector<std::string> &&args) {
         using namespace std::chrono;
+        using namespace std::chrono_literals;
         using namespace util;
+        auto aMinuteAgo = system_clock::now() - 60s;
         if (timeRange[0].find('T') == std::string::npos) timeRange[0] += "T00:00:00.000Z";
         if (timeRange[1].find('T') == std::string::npos) timeRange[1] += "T00:00:00.000Z";
         auto t0 = util::parse8601(timeRange[0]), t1 = util::parse8601(timeRange[1]);
@@ -87,7 +89,8 @@ namespace influxdb {
             auto bsql = fsql;
             auto bt = batchTime0(t0 + batchTime * bi, batchTime);
             auto bt0 = (bi == 0) ? t0 : bt, bt1 = std::min({bt + batchTime, t1});
-            auto eo = bi < (batches - 1) ? "<" : "<=";
+            std::string eo = bi < (batches - 1) ? "<" : "<=";
+            if(bt1 >= aMinuteAgo) eo += "/*future!*/"; // fix: don't pollute cache with results from queries to futures (or near past)
             replace(bsql, ":time_condition:",
                     "(time >= '" + to8601(bt0) + "' AND time " + eo + " '" + to8601(bt1) + "')");
 
@@ -184,7 +187,7 @@ namespace influxdb {
     }
 
     std::future<void> client::queryRaw(const std::string &sql, std::function<void(const char *, size_t)> &&callback) {
-        // std::cout << sql << std::endl;
+       //  std::cout << sql << std::endl;
         auto path = "/query?pretty=false&db=" + dbName + "&epoch=ms&q=" + util::urlEncode(sql);
        // auto req = std::make_shared<evpp::httpc::GetRequest>(pool.get(), t->loop(), path);
         auto req = new evpp::httpc::GetRequest(pool.get(), t->loop(), path);
@@ -196,15 +199,17 @@ namespace influxdb {
 
         req->set_retry_interval(evpp::Duration(2.0));
         req->set_retry_number(10);
-        req->Execute([result_promise, callback, req](const t_resp &response) {
+        req->Execute([result_promise, callback, req, sql](const t_resp &response) {
             auto hc = response->http_code();
             try {
                 if (hc != 200) {
-                    std::cerr << "http error " << hc << std::endl;
+                    std::cerr << "http error " << hc << std::endl << "Query: " << sql <<std::endl;
 
                     // r->Execute(std::bind(&HandleHTTPResponse, std::placeholders::_1, req));
                     throw std::runtime_error("http error " + std::to_string(hc) + " " + response->body().ToString());
                 }
+               // auto date(util::parseHttpDate(response->FindHeader("Date")));
+               // LOG_I << "server-data:" << util::to8601(date);
                 callback(response->body().data(), response->body().size());
                 result_promise->set_value();
             } catch (...) {

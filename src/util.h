@@ -69,8 +69,7 @@ namespace influxdb {
 
 
         static date::sys_time<std::chrono::milliseconds>
-        parse8601(std::istream&& is)
-        {
+        parse8601(std::istream &&is) {
             std::string save;
             is >> save;
 
@@ -91,16 +90,34 @@ namespace influxdb {
             }
         }
 
-        inline date::sys_time<std::chrono::milliseconds>
-        parse8601(const std::string& str) {
-            return parse8601(istringstream{str});
+        static date::sys_time<std::chrono::milliseconds>
+        parseHttpDate(std::istream &&is) {
+            std::string save;
+            is >> save;
+            try {
+                static std::locale enUS("en_US");
+                std::istringstream in{save};
+                in.imbue(enUS);
+                date::sys_time<std::chrono::milliseconds> tp;
+                // Tue, 15 Nov 1994 12:45:26 GMT
+                in >> date::parse("%a, %d %b %Y %T %Z", tp); // "D, d M Y H:i:s T%FT%TZ"
+                return tp;
+            } catch (const std::exception &e) {
+                throw std::runtime_error("parseHttpDate('" + save + "') failed");
+            }
         }
+
+        inline date::sys_time<std::chrono::milliseconds>
+        parse8601(const std::string &str) { return parse8601(istringstream{str}); }
+
+        inline date::sys_time<std::chrono::milliseconds>
+        parseHttpDate(const std::string &str) { return parseHttpDate(istringstream{str}); }
 
         inline std::string to8601(const date::sys_time<std::chrono::milliseconds> &tp) {
             return date::format("%FT%TZ", tp);
         }
 
-       inline std::string to8601(int64_t epochMs) {
+        inline std::string to8601(int64_t epochMs) {
             const static date::sys_time<std::chrono::milliseconds> tp_epoch;
             return to8601(tp_epoch + std::chrono::milliseconds(epochMs));
         }
@@ -114,9 +131,9 @@ namespace influxdb {
             return to8601(std::chrono::duration_cast<std::chrono::milliseconds>(tp.time_since_epoch()).count());
         }
 
-        static bool replace(std::string& str, const std::string& from, const std::string& to) {
+        static bool replace(std::string &str, const std::string &from, const std::string &to) {
             size_t start_pos = str.find(from);
-            if(start_pos == std::string::npos)
+            if (start_pos == std::string::npos)
                 return false;
             str.replace(start_pos, from.length(), to);
             return true;
