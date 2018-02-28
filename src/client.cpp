@@ -2,24 +2,21 @@
 #define WIN32_LEAN_AND_MEAN
 #endif
 
-#include <evpp/event_loop_thread.h>
-
-#include <evpp/httpc/conn_pool.h>
-#include <evpp/httpc/request.h>
-#include <evpp/httpc/conn.h>
-#include <evpp/httpc/response.h>
 #include <cmath>
 #include <future>
-#include <array>
 
-#include "client.h"
-#include "util.h"
-#include "json-readers.h"
-#include "../../pclog/pclog.h"
-#include <future>
+#include <evpp/event_loop_thread.h>
+#include <evpp/httpc/conn_pool.h>
+#include <evpp/httpc/request.h>
+#include <evpp/httpc/response.h>
+
 #include <rapidjson/document.h>
 #include <rapidjson/stringbuffer.h>
 #include <rapidjson/writer.h>
+
+#include "client.h"
+#include "json-readers.h"
+#include "util.h"
 
 date::sys_time<std::chrono::milliseconds>
 batchTime0(date::sys_time<std::chrono::milliseconds> &&tp, std::chrono::milliseconds &batchTime) {
@@ -38,7 +35,7 @@ void throwQueryError(Document &d, const std::string &sql) {
         throw std::runtime_error("response parse error");
     }
     if (!d.HasMember("results")) {
-        throw std::runtime_error("response has no results member");
+        throw std::runtime_error("influxdb response has no results member, query was \"" + sql + "\"");
     }
     if (d["results"][0].HasMember("error")) {
         throw std::runtime_error(
@@ -48,9 +45,7 @@ void throwQueryError(Document &d, const std::string &sql) {
 
 namespace influxdb {
     std::string sqlArgs(std::string sql, const std::vector<std::string> &args) {
-        for (auto &arg : args) {
-            util::replace(sql, "?", "'" + arg + "'");
-        }
+        for (auto &arg : args) util::replace(sql, "?", "'" + arg + "'");
         return sql;
     }
 
@@ -88,26 +83,30 @@ namespace influxdb {
         for (int bi = 0; bi < batches; ++bi) {
             auto bsql = fsql;
             auto bt = batchTime0(t0 + batchTime * bi, batchTime);
-            auto bt0 = (bi == 0) ? t0 : bt, bt1 = std::min({bt + batchTime, t1});
-            std::string eo = bi < (batches - 1) ? "<" : "<=";
-            if(bt1 >= aMinuteAgo) eo += "/*future!*/"; // fix: don't pollute cache with results from queries to futures (or near past)
-            replace(bsql, ":time_condition:",
-                    "(time >= '" + to8601(bt0) + "' AND time " + eo + " '" + to8601(bt1) + "')");
+            auto bt0 = (bi == 0) ? t0 : bt, bt1 = (bi == (batches - 1)) ? t1 : std::min({bt + batchTime, t1});
 
-            // with batching responses can arrive out-of-order!
+            std::string eo = bi < (batches - 1) ? "<" : "<=";
+
+            if (bt1 >= aMinuteAgo)// fix: don't pollute cache with results from queries to futures (or near past)
+                eo += "/*future!" + std::to_string(duration_cast<milliseconds>(aMinuteAgo.time_since_epoch()).count()) +
+                      "*/";
+
+            replace(bsql,
+                    ":time_condition:",
+                    "(time >= '" + to8601(bt0) + "' AND time " + eo + " '" + to8601(bt1) + "')"
+            );
+
             futs.emplace_back(queryRaw(bsql, [&columns, &results, bi](const char *body, size_t len) {
                 rapidjson::Reader reader;
 
                 if (columns.size() == 0) {
-                    // capture columns
                     ColumnReader colsReader;
                     {
                         rapidjson::StringStream ss(body);
                         reader.Parse(ss, colsReader);
                     }
                     columns = colsReader.columns;
-                    //if(result.columns.size() == 0)
-                    //    throw std::runtime_error("empty columns array");
+                    //if(result.columns.size() == 0) throw std::runtime_error("empty columns array");
                 }
 
                 if (columns.size() != 0) {
@@ -129,9 +128,7 @@ namespace influxdb {
             }));
         }
 
-        for (auto &fut:futs) {
-            fut.wait();
-        }
+        for (auto &fut:futs) fut.wait();
 
         // sorted merge
         std::sort(results.begin(), results.end(), [](const fetchResult &a, const fetchResult &b) {
@@ -159,63 +156,33 @@ namespace influxdb {
         return resultMerged;
     }
 
-
-    std::future<const char *> client::queryRaw(const std::string &sql) {
-        // std::cout << sql << std::endl;
-        auto path = "/query?pretty=false&db=" + dbName + "&epoch=ms&q=" + util::urlEncode(sql);
-        auto *r = new evpp::httpc::GetRequest(pool.get(), t.get()->loop(), path);
-
-        typedef std::promise<const char *> t_promise;
-        typedef std::shared_ptr<evpp::httpc::Response> t_resp;
-        std::shared_ptr<t_promise> result_promise = std::make_shared<t_promise>();
-        // r->Execute(std::bind(&HandleHTTPResponse, std::placeholders::_1, r, (result_promise)));
-
-        r->Execute(std::function<void(const t_resp &response)>([result_promise](const t_resp &response) {
-            auto hc = response->http_code();
-
-            if (hc != 200) {
-                throw std::runtime_error("http error " + std::to_string(hc));
-            }
-
-            try {
-                result_promise->set_value(response->body().data());
-            } catch (...) {
-                result_promise->set_exception(std::current_exception());
-            }
-        }));
-        return result_promise->get_future();
-    }
-
     std::future<void> client::queryRaw(const std::string &sql, std::function<void(const char *, size_t)> &&callback) {
-       //  std::cout << sql << std::endl;
-        auto path = "/query?pretty=false&db=" + dbName + "&epoch=ms&q=" + util::urlEncode(sql);
-       // auto req = std::make_shared<evpp::httpc::GetRequest>(pool.get(), t->loop(), path);
-        auto req = new evpp::httpc::GetRequest(pool.get(), t->loop(), path);
-
         typedef std::promise<void> t_promise;
         typedef std::shared_ptr<evpp::httpc::Response> t_resp;
 
-        std::shared_ptr<t_promise> result_promise = std::make_shared<t_promise>();
-
+        //std::cout << sql << std::endl;
+        auto path = "/query?pretty=false&db=" + dbName + "&epoch=ms&q=" + util::urlEncode(sql);
+        auto req = new evpp::httpc::GetRequest(pool.get(), t->loop(), path);
         req->set_retry_interval(evpp::Duration(2.0));
         req->set_retry_number(10);
+
+        std::shared_ptr<t_promise> result_promise = std::make_shared<t_promise>();
         req->Execute([result_promise, callback, req, sql](const t_resp &response) {
             auto hc = response->http_code();
             try {
                 if (hc != 200) {
-                    std::cerr << "http error " << hc << std::endl << "Query: " << sql <<std::endl;
-
-                    // r->Execute(std::bind(&HandleHTTPResponse, std::placeholders::_1, req));
-                    throw std::runtime_error("http error " + std::to_string(hc) + " " + response->body().ToString());
+                    std::cerr << "influxdb http error " << hc << ": " << response->body().ToString() << std::endl
+                              << "Query: " << sql << std::endl;
+                    throw std::runtime_error(
+                            "influxdb http error " + std::to_string(hc) + " " + response->body().ToString());
                 }
-               // auto date(util::parseHttpDate(response->FindHeader("Date")));
-               // LOG_I << "server-data:" << util::to8601(date);
+                // auto date(util::parseHttpDate(response->FindHeader("Date")));
+                // LOG_I << "server-data:" << util::to8601(date);
                 callback(response->body().data(), response->body().size());
                 result_promise->set_value();
             } catch (...) {
                 result_promise->set_exception(std::current_exception());
             }
-            //req.get(); // hacky ptr capture
             delete req;
         });
 
@@ -239,6 +206,4 @@ namespace influxdb {
 
         return tags;
     }
-
 }
-
