@@ -3,6 +3,12 @@
 #include <iostream>
 #include <sstream>
 #include <iomanip>
+#if defined(_WIN32)
+#define WIN32_LEAN_AND_MEAN
+#include <winsock2.h>
+#include <windows.h>
+#include <ws2tcpip.h>
+#endif
 
 //#include <date/date.h>
 #include "../date/include/date/date.h"
