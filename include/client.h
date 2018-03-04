@@ -53,8 +53,8 @@ namespace influxdb {
         rapidjson::Document query(const std::string &sql, const std::vector<std::string> &&args = {});
 
         template<std::size_t N>
-        std::vector<std::string> queryTags(const std::string &sql, const std::array<std::string, N> &args) {
-            queryTags(sql, {args.begin(), args.end()});
+        std::set<std::string> queryTags(const std::string &sql, const std::array<std::string, N> &args) {
+            return queryTags(sql, {args.begin(), args.end()});
         }
 
         std::future<void> queryRaw(const std::string &sql, std::function<void(const char *, size_t)> &&callback);
