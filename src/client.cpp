@@ -55,7 +55,7 @@ namespace influxdb {
 		pool = std::make_unique<evpp::httpc::ConnPool>(host, port, evpp::Duration(30.0));
 		t = std::make_unique<evpp::EventLoopThread>();
 		t->Start(true);
-		batchTime = 24h;
+		batchTime = 48h;
 	}
 
 	client::~client() {
