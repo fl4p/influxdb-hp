@@ -16,7 +16,7 @@ set(RAPIDJSON_BUILD_EXAMPLES OFF CACHE BOOL "RAPIDJSON_BUILD_EXAMPLES" FORCE)
 set(RAPIDJSON_BUILD_TESTS OFF CACHE BOOL "RAPIDJSON_BUILD_EXAMPLES" FORCE)
 add_subdirectory(rapidjson)
 
-add_library(influxdb include/client.h src/client.cpp src/util.h src/json-readers.h)
+add_library(influxdb include/client.h src/client.cpp src/util.h src/json-readers.h include/fetch.h src/cache.h farmhash/src/farmhash.cc cpp-base64/base64.cpp)
 add_library(influxdb_shared SHARED src/client.cpp)
 
 set(EVPP_VCPKG_BUILD ON CACHE BOOL "EVPP_VCPKG_BUILD" FORCE)

@@ -13,3 +13,9 @@
 [submodule "evpp"]
 	path = evpp
 	url = https://github.com/f4bsch/evpp
+[submodule "farmhash"]
+	path = farmhash
+	url = https://github.com/google/farmhash
+[submodule "cpp-base64"]
+	path = cpp-base64
+	url = https://github.com/ReneNyffenegger/cpp-base64

@@ -8,6 +8,8 @@
 
 #include <rapidjson/document.h>
 
+#include "fetch.h"
+
 namespace evpp {
     class EventLoopThread;
     namespace httpc {
@@ -30,13 +32,9 @@ namespace influxdb {
         client(const std::string &host, int port, const std::string &dbName);
         ~client();
 
-        struct fetchResult {
-            std::vector<std::string> columns;
-            std::vector<float> data;
-            std::vector<uint64_t> time;
-            size_t num = 0;
-            size_t dataStride = 0;
-        };
+
+        typedef influxdb::fetchResult fetchResult;
+
 
         /**
          * Fetches points for given time range of a single series using batched, async IO requests.
