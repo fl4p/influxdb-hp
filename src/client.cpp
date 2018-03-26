@@ -49,8 +49,8 @@ void throwQueryError(Document &d, const std::string &sql) {
 typedef std::shared_ptr<evpp::httpc::Response> t_resp;
 struct queryHandlerArgs {
     std::string sql;
-    evpp::httpc::Request req;
-    std::promise<void> promise;
+    evpp::httpc::GetRequest req;
+    std::shared_ptr<std::promise<void>> promise;
     std::function<void(const char *, size_t)> callback;
     int retry;
 };
@@ -60,7 +60,7 @@ void queryResultHandler(const t_resp &response, queryHandlerArgs *args) {
     try {
         if (hc != 200) {
             if (args->retry < 7) {
-                std::cerr << "influxdb http error, retry " << args->retry << std::endl;
+                std::cerr << "influxdb http error " << hc  << " with " << args->req.host() << args->req.uri() << ", retry " << args->retry << std::endl;
                 std::this_thread::sleep_for(200ms * std::pow(2, args->retry++));
                 args->req.Execute(std::bind(queryResultHandler, std::placeholders::_1, args));
                 return;
@@ -73,9 +73,9 @@ void queryResultHandler(const t_resp &response, queryHandlerArgs *args) {
         // auto date(util::parseHttpDate(response->FindHeader("Date")));
         // LOG_I << "server-data:" << util::to8601(date);
         args->callback(response->body().data(), response->body().size());
-        args->promise.set_value();
+        args->promise->set_value();
     } catch (...) {
-        args->promise.set_exception(std::current_exception());
+        args->promise->set_exception(std::current_exception());
     }
     delete args;
 };
@@ -206,6 +206,8 @@ namespace influxdb {
         typedef std::promise<void> t_promise;
         typedef std::shared_ptr<evpp::httpc::Response> t_resp;
 
+        std::shared_ptr<t_promise> result_promise = std::make_shared<t_promise>();
+
         //std::cout << sql << std::endl;
         auto path = "/query?db=" + dbName + "&epoch=ms&q=" + util::urlEncode(sql);
 
@@ -241,15 +243,12 @@ namespace influxdb {
         };
          */
 
-        auto handlerArgs = new queryHandlerArgs{
-                sql, evpp::httpc::GetRequest(pool.get(), t->loop(), path),
-                {}, callback, 0,
-        };
+        auto handlerArgs = new queryHandlerArgs{sql, {pool.get(), t->loop(), path}, result_promise, callback, 0,};
         handlerArgs->req.Execute(std::bind(queryResultHandler, std::placeholders::_1, handlerArgs));
 
         //req->Execute(handler);
 
-        return std::move(handlerArgs->promise.get_future());
+        return std::move(result_promise->get_future());
     }
 
     static std::string jsonToString(const rapidjson::Value &jv) {
