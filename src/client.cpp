@@ -60,7 +60,7 @@ void queryResultHandler(const t_resp &response, queryHandlerArgs *args) {
     try {
         if (hc != 200) {
             if (args->retry < 7) {
-                std::cerr << "influxdb http error " << hc  << " with " << args->req.host() << args->req.uri() << ", retry " << args->retry << std::endl;
+                std::cerr << "influxdb http error " << hc  << " with http://" << args->req.host() << ":" << args->req.port() << args->req.uri() << ", retry " << args->retry << std::endl;
                 std::this_thread::sleep_for(200ms * std::pow(2, args->retry++));
                 args->req.Execute(std::bind(queryResultHandler, std::placeholders::_1, args));
                 return;
