@@ -20,6 +20,7 @@
 #include "util.h"
 #include "cache.h"
 
+
 date::sys_time<std::chrono::milliseconds>
 batchTime0(date::sys_time<std::chrono::milliseconds> &&tp, std::chrono::milliseconds &batchTime) {
     using namespace std::chrono;
@@ -32,7 +33,7 @@ batchTime0(date::sys_time<std::chrono::milliseconds> &&tp, std::chrono::millisec
 
 }
 
-void throwQueryError(Document &d, const std::string &sql) {
+void throwQueryError(rapidjson::Document &d, const std::string &sql) {
     if (d.HasParseError()) {
         throw std::runtime_error("response parse error");
     }
@@ -56,11 +57,14 @@ struct queryHandlerArgs {
 };
 
 void queryResultHandler(const t_resp &response, queryHandlerArgs *args) {
+    using namespace std::chrono_literals;
+
     auto hc = response->http_code();
     try {
         if (hc != 200) {
             if (args->retry < 7) {
-                std::cerr << "influxdb http error " << hc  << " with http://" << args->req.host() << ":" << args->req.port() << args->req.uri() << ", retry " << args->retry << std::endl;
+                std::cerr << "influxdb http error " << hc << " with http://" << args->req.host() << ":"
+                          << args->req.port() << args->req.uri() << ", retry " << args->retry << std::endl;
                 std::this_thread::sleep_for(200ms * std::pow(2, args->retry++));
                 args->req.Execute(std::bind(queryResultHandler, std::placeholders::_1, args));
                 return;
@@ -82,22 +86,83 @@ void queryResultHandler(const t_resp &response, queryHandlerArgs *args) {
 
 
 namespace influxdb {
+
+
     std::string sqlArgs(std::string sql, const std::vector<std::string> &args) {
         for (auto &arg : args) util::replace(sql, "?", "'" + arg + "'");
         return sql;
     }
 
-    client::client(const std::string &host, int port, const std::string &dbName) : dbName(dbName) {
+    client::client(const std::string &host, int port, const std::string &dbName, std::chrono::milliseconds batchTime, size_t connPoolSize) : dbName(dbName) {
         wsaStart();
-        pool = std::make_unique<evpp::httpc::ConnPool>(host, port, evpp::Duration(30.0));
+        pool = std::make_unique<evpp::httpc::ConnPool>(host, port, evpp::Duration(static_cast<double >(RequestTimeoutSeconds)), connPoolSize);
         t = std::make_unique<evpp::EventLoopThread>();
         t->Start(true);
-        batchTime = 48h;
+        this->batchTime = batchTime;
     }
 
     client::~client() {
         pool->Clear();
         t->Stop(true);
+    }
+
+
+    client::fetchResult sortedMerge(std::vector<fetchResult> &results) {
+        std::sort(results.begin(), results.end(), [](const fetchResult &a, const fetchResult &b) {
+            if (a.time.empty() && b.time.empty()) return false;
+            if (a.time.empty()) return true;
+            if (b.time.empty()) return false;
+            return a.time[0] < b.time[0];
+        });
+
+        fetchResult resultMerged{{}, {}, {}, 0, 0, {}, {}};
+        if (results.empty()) return resultMerged;
+        for (auto &r : results) resultMerged.num += r.num;
+        auto columns = results[0].columns;
+
+        //LOG_W << LOG_EXPR(columns.size());
+
+        resultMerged.dataStride = (columns.size() - 1);
+        resultMerged.columns = columns;
+        resultMerged.time.resize(resultMerged.num);
+        resultMerged.data.resize(resultMerged.num * resultMerged.dataStride);
+
+        size_t offset = 0;
+        for (auto &r : results) {
+            std::move(r.time.begin(), r.time.end(), resultMerged.time.begin() + offset);
+            std::move(r.data.begin(), r.data.end(), resultMerged.data.begin() + (offset * resultMerged.dataStride));
+            offset += r.num;
+        }
+
+        return resultMerged;
+    }
+
+    auto sortedMergeGrouped(const std::vector<std::vector<series>> &batches, const TagsKeyFunc &keyFunc)
+    -> std::unordered_map<std::string, series> {
+
+        std::unordered_map<std::string, std::vector<series>> grouped;
+        for (auto &batch:batches) {
+            for (auto &r:batch) {
+                auto key = keyFunc(r.tags);
+                auto f = grouped.find(key);
+                if (f == grouped.end()) {
+                    f = grouped.emplace(key, std::vector<series>{}).first;
+                }
+                f->second.emplace_back(std::move(r));
+            }
+        }
+
+        std::unordered_map<std::string, series> merged;
+        for (auto &kv:grouped) {
+            merged.emplace(kv.first, sortedMerge(kv.second));
+        }
+
+        return merged;
+    }
+
+    void maybeFixTimeRange(std::array<std::string, 2> &timeRange) {
+        if (timeRange[0].find('T') == std::string::npos) timeRange[0] += "T00:00:00.000Z";
+        if (timeRange[1].find('T') == std::string::npos) timeRange[1] += "T00:00:00.000Z";
     }
 
     client::fetchResult
@@ -106,9 +171,11 @@ namespace influxdb {
         using namespace std::chrono;
         using namespace std::chrono_literals;
         using namespace util;
+
+        maybeFixTimeRange(timeRange);
+
         auto aMinAgo = time_point_cast<milliseconds>(system_clock::now() - 60s);
-        if (timeRange[0].find('T') == std::string::npos) timeRange[0] += "T00:00:00.000Z";
-        if (timeRange[1].find('T') == std::string::npos) timeRange[1] += "T00:00:00.000Z";
+
         auto t0 = util::parse8601(timeRange[0]), t1 = util::parse8601(timeRange[1]);
         size_t batches = (size_t) std::ceil(milliseconds(t1 - t0).count() / (float) milliseconds(batchTime).count());
 
@@ -139,6 +206,8 @@ namespace influxdb {
                     //? cache.get_async_throw(bsql, results[bi])                  :
                     queryRaw(bsql, [&columns, &results, bi, bsql /*, &cache*/](const char *body, size_t len) {
                         rapidjson::Reader reader;
+
+                        //LOG_D << "body:" << std::string(body);
 
                         if (columns.size() == 0) {
                             ColumnReader colsReader;
@@ -172,34 +241,7 @@ namespace influxdb {
 
         for (auto &fut:futs) fut.get();
 
-        // sorted merge
-        std::sort(results.begin(), results.end(), [](const fetchResult &a, const fetchResult &b) {
-            if (a.time.empty() && b.time.empty()) return false;
-            if (a.time.empty()) return true;
-            if (b.time.empty()) return false;
-            return a.time[0] < b.time[0];
-        });
-
-        fetchResult resultMerged{0, 0, {}, {}, {}};
-        if (results.empty()) return resultMerged;
-        for (auto &r : results) resultMerged.num += r.num;
-        if (columns.empty()) columns = results[0].columns;
-
-        //LOG_W << LOG_EXPR(columns.size());
-
-        resultMerged.dataStride = (columns.size() - 1);
-        resultMerged.columns = columns;
-        resultMerged.time.resize(resultMerged.num);
-        resultMerged.data.resize(resultMerged.num * resultMerged.dataStride);
-
-        size_t offset = 0;
-        for (auto &r : results) {
-            std::move(r.time.begin(), r.time.end(), resultMerged.time.begin() + offset);
-            std::move(r.data.begin(), r.data.end(), resultMerged.data.begin() + (offset * resultMerged.dataStride));
-            offset += r.num;
-        }
-
-        return resultMerged;
+        return sortedMerge(results);
     }
 
     std::future<void> client::queryRaw(const std::string &sql, std::function<void(const char *, size_t)> &&callback) {
@@ -208,6 +250,7 @@ namespace influxdb {
 
         std::shared_ptr<t_promise> result_promise = std::make_shared<t_promise>();
 
+        LOG_D << sql;
         //std::cout << sql << std::endl;
         auto path = "/query?db=" + dbName + "&epoch=ms&q=" + util::urlEncode(sql);
 
@@ -281,5 +324,88 @@ namespace influxdb {
         }
         throwQueryError(d, sqlFilled);
         return d;
+    }
+
+
+    std::unordered_map<std::string, series>
+    client::fetchGroups(const std::string &sql, std::array<std::string, 2> timeRange,
+                         const std::vector<std::string> &&args,
+                        const TagsKeyFunc &keyFunc) {
+        using namespace std::chrono;
+        using namespace std::chrono_literals;
+        using namespace util;
+
+        maybeFixTimeRange(timeRange);
+
+        auto aMinAgo = time_point_cast<milliseconds>(system_clock::now() - 60s);
+
+        auto t0 = util::parse8601(timeRange[0]), t1 = util::parse8601(timeRange[1]);
+        size_t numBatches = (size_t) std::ceil(milliseconds(t1 - t0).count() / (float) milliseconds(batchTime).count());
+
+        auto fsql = sqlArgs(sql, args);
+
+        std::vector<std::future<void>> futs;
+        std::vector<std::string> columns;
+        std::vector<std::vector<series>> batches{numBatches};
+
+        for (int bi = 0; bi < numBatches; ++bi) {
+            auto bsql = fsql;
+            auto bt = batchTime0(t0 + batchTime * bi, batchTime);
+            auto bt0 = (bi == 0) ? t0 : bt, bt1 = (bi == (numBatches - 1)) ? t1 : std::min({bt + batchTime, t1});
+
+            std::string eo = bi < (numBatches - 1) ? "<" : "<=";
+
+            if (bt1 >= aMinAgo)// fix: don't pollute cache with results from queries to futures (or near past)
+                eo += "/*future!" + std::to_string(aMinAgo.time_since_epoch().count()) + "*/";
+
+            replace(bsql, ":time_condition:",
+                    "(time >= '" + to8601(bt0) + "' AND time " + eo + " '" + to8601(bt1) + "')"
+            );
+
+            // LOG_D << "f:" << LOG_EXPR(bsql);
+            //file_cache<fetchResult> cache{"influx-cache"};
+            futs.emplace_back(
+                    //false && cache.have(bsql)
+                    //? cache.get_async_throw(bsql, results[bi])                  :
+                    queryRaw(bsql, [&columns, &batches, bi, bsql /*, &cache*/](const char *body, size_t len) {
+                        rapidjson::Reader reader;
+
+                        LOG_D << "body len=" << len;
+
+                        if (columns.size() == 0) {
+                            ColumnReader colsReader;
+                            {
+                                rapidjson::StringStream ss(body);
+                                reader.Parse(ss, colsReader);
+                            }
+                            columns = colsReader.columns;
+                        }
+
+                        if (columns.size() != 0) {
+                            auto &batch(batches[bi]);
+                            SeriesReader dataReader{columns.size(), batch};
+                            rapidjson::StringStream ss(body);
+                            reader.Parse(ss, dataReader);
+                            for (auto &r:batch) {
+                                if (r.data.size() % (columns.size() - 1)) {
+                                    throw std::runtime_error("unexpected data len");
+                                }
+                                r.dataStride = (columns.size() - 1);
+                                r.num = r.data.size() / r.dataStride;
+                                r.columns = columns; // copy for cache
+
+                                if (r.num != r.time.size()) {
+                                    throw std::runtime_error("unexpected time len");
+                                }
+                            }
+
+                            //cache.set(bsql, result);
+                        }
+                    }));
+        }
+
+        for (auto &fut:futs) fut.get();
+
+        return sortedMergeGrouped(batches, keyFunc);
     }
 }

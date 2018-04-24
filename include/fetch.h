@@ -1,18 +1,23 @@
 #include <string>
 #include <vector>
+#include <unordered_map>
 
 #include "../../pclog/pclog.h"
 #include "../../pclog/to_string.h"
 
 
 namespace influxdb {
-    struct fetchResult {
-        size_t num = 0;
-        size_t dataStride = 0;
-        std::vector<std::string> columns;
-        std::vector<float> data;
-        std::vector<uint64_t> time;
+    struct series {
+        std::string name{};
+        std::unordered_map<std::string, std::string> tags{};
+        std::vector<std::string> columns{};
+        size_t num{0};
+        size_t dataStride{0};
+        std::vector<float> data{};
+        std::vector<uint64_t> time{};
     };
+
+    typedef series fetchResult;
 
     template<typename T>
     static void _write(std::ostream &s, const T &v) {
