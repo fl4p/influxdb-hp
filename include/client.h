@@ -28,7 +28,7 @@ namespace influxdb {
 
     using namespace std::chrono_literals;
 
-    constexpr int RequestTimeoutSeconds = 60 * 2;
+    constexpr int RequestTimeoutSeconds = 60 * 4;
     constexpr auto DefaultBatchTime = 48h;
     constexpr size_t DefaultConnPoolSize = 10;
 

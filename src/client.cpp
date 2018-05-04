@@ -250,7 +250,7 @@ namespace influxdb {
 
         std::shared_ptr<t_promise> result_promise = std::make_shared<t_promise>();
 
-        LOG_D << sql;
+        //LOG_D << sql;
         //std::cout << sql << std::endl;
         auto path = "/query?db=" + dbName + "&epoch=ms&q=" + util::urlEncode(sql);
 
@@ -370,7 +370,7 @@ namespace influxdb {
                     queryRaw(bsql, [&columns, &batches, bi, bsql /*, &cache*/](const char *body, size_t len) {
                         rapidjson::Reader reader;
 
-                        LOG_D << "body len=" << len;
+                      //  LOG_D << bsql << " resp body len=" << len;
 
                         if (columns.size() == 0) {
                             ColumnReader colsReader;
