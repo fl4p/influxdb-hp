@@ -63,7 +63,8 @@ void queryResultHandler(const t_resp &response, queryHandlerArgs *args) {
     try {
         if (hc != 200) {
             if (args->retry < 7) {
-                std::cerr << "influxdb http error " << hc << " with http://" << args->req.host() << ":"
+                std::cerr << "influxdb http error " << hc << " with query \"" << args->sql << "\" request http://"
+                          << args->req.host() << ":"
                           << args->req.port() << args->req.uri() << ", retry " << args->retry << std::endl;
                 std::this_thread::sleep_for(200ms * std::pow(2, args->retry++));
                 args->req.Execute(std::bind(queryResultHandler, std::placeholders::_1, args));
@@ -93,9 +94,12 @@ namespace influxdb {
         return sql;
     }
 
-    client::client(const std::string &host, int port, const std::string &dbName, std::chrono::milliseconds batchTime, size_t connPoolSize) : dbName(dbName) {
+    client::client(const std::string &host, int port, const std::string &dbName, std::chrono::milliseconds batchTime,
+                   size_t connPoolSize) : dbName(dbName) {
         wsaStart();
-        pool = std::make_unique<evpp::httpc::ConnPool>(host, port, evpp::Duration(static_cast<double >(RequestTimeoutSeconds)), connPoolSize);
+        pool = std::make_unique<evpp::httpc::ConnPool>(host, port,
+                                                       evpp::Duration(static_cast<double >(RequestTimeoutSeconds)),
+                                                       connPoolSize);
         t = std::make_unique<evpp::EventLoopThread>();
         t->Start(true);
         this->batchTime = batchTime;
@@ -108,23 +112,42 @@ namespace influxdb {
 
 
     client::fetchResult sortedMerge(std::vector<fetchResult> &results) {
+
+        // remove empty series
+        results.erase(std::remove_if(results.begin(), results.end(), [](const fetchResult &r) {
+            return r.time.empty();
+        }), results.end());
+
+        fetchResult resultMerged{{}, {}, {}, 0, 0, {}, {}};
+        if (results.empty())
+            return resultMerged;
+
         std::sort(results.begin(), results.end(), [](const fetchResult &a, const fetchResult &b) {
-            if (a.time.empty() && b.time.empty()) return false;
-            if (a.time.empty()) return true;
-            if (b.time.empty()) return false;
             return a.time[0] < b.time[0];
         });
 
-        fetchResult resultMerged{{}, {}, {}, 0, 0, {}, {}};
-        if (results.empty()) return resultMerged;
-        for (auto &r : results) resultMerged.num += r.num;
+       // LOG_D << LOG_EXPR(results.size());
+        // strip overlaps TODO
+        for (auto i = 0; (i+1) < results.size(); ++i) {
+            if (results[i].time.back() >= results[i + 1].time.front()) {
+                LOG_D << LOG_EXPR(i) << LOG_EXPR(results[i].time.back()) << LOG_EXPR(results[i + 1].time.front())
+                      << LOG_EXPR(results[i].time.back() - results[i + 1].time.front());
+                throw std::logic_error("cant merge time-overlapping results!");
+            }
+        }
+
+
+        for (auto &r : results)
+            resultMerged.num += r.num;
         auto columns = results[0].columns;
 
-        //LOG_W << LOG_EXPR(columns.size());
+        if (columns.empty()) throw std::runtime_error("sortedMerge: no columns!");
 
+        //LOG_W << LOG_EXPR(columns.size());
         resultMerged.dataStride = (columns.size() - 1);
         resultMerged.columns = columns;
         resultMerged.time.resize(resultMerged.num);
+        // LOG_W << LOG_EXPR(columns.size()) << LOG_EXPR(resultMerged.num) << LOG_EXPR(resultMerged.dataStride);
         resultMerged.data.resize(resultMerged.num * resultMerged.dataStride);
 
         size_t offset = 0;
@@ -132,6 +155,27 @@ namespace influxdb {
             std::move(r.time.begin(), r.time.end(), resultMerged.time.begin() + offset);
             std::move(r.data.begin(), r.data.end(), resultMerged.data.begin() + (offset * resultMerged.dataStride));
             offset += r.num;
+        }
+
+        /*
+        //for(auto &r: results) {
+        uint64_t lastT = 0, i = 0;
+        for (auto t:resultMerged.time) {
+            if (t < lastT) {
+                LOG_W << i << " " << LOG_EXPR(t) << LOG_EXPR(lastT) << LOG_EXPR((lastT - t) / 1e3);
+            }
+            lastT = t;
+            ++i;
+        }*/
+        // }
+
+        // fill NaNs with previous
+        for(size_t i = 1; i < resultMerged.num; ++i) {
+            for(size_t c = 0; c < resultMerged.dataStride; ++c) {
+                if(std::isnan(resultMerged.data[i*resultMerged.dataStride+c])) {
+                    resultMerged.data[i*resultMerged.dataStride+c] = resultMerged.data[(i-1)*resultMerged.dataStride+c];
+                }
+            }
         }
 
         return resultMerged;
@@ -329,7 +373,7 @@ namespace influxdb {
 
     std::unordered_map<std::string, series>
     client::fetchGroups(const std::string &sql, std::array<std::string, 2> timeRange,
-                         const std::vector<std::string> &&args,
+                        const std::vector<std::string> &&args,
                         const TagsKeyFunc &keyFunc) {
         using namespace std::chrono;
         using namespace std::chrono_literals;
@@ -370,7 +414,7 @@ namespace influxdb {
                     queryRaw(bsql, [&columns, &batches, bi, bsql /*, &cache*/](const char *body, size_t len) {
                         rapidjson::Reader reader;
 
-                      //  LOG_D << bsql << " resp body len=" << len;
+                        //  LOG_D << bsql << " resp body len=" << len;
 
                         if (columns.size() == 0) {
                             ColumnReader colsReader;

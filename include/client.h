@@ -57,7 +57,7 @@ namespace influxdb {
          * @return
          */
         fetchResult
-        fetch(const std::string &sql, std::array<std::string, 2> timeRange, const std::vector<std::string> &&args);
+        fetch(const std::string &sql, std::array<std::string, 2> timeRange, const std::vector<std::string> &&args = {});
 
 
         std::set<std::string> queryTags(const std::string &sql, const std::vector<std::string> &&args = {});
