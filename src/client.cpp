@@ -49,6 +49,7 @@ void throwQueryError(rapidjson::Document &d, const std::string &sql) {
 
 typedef std::shared_ptr<evpp::httpc::Response> t_resp;
 struct queryHandlerArgs {
+    std::atomic<int> &numPending;
     std::string sql;
     evpp::httpc::GetRequest req;
     std::shared_ptr<std::promise<void>> promise;
@@ -58,6 +59,8 @@ struct queryHandlerArgs {
 
 void queryResultHandler(const t_resp &response, queryHandlerArgs *args) {
     using namespace std::chrono_literals;
+
+    --args->numPending;
 
     auto hc = response->http_code();
     try {
@@ -95,7 +98,7 @@ namespace influxdb {
     }
 
     client::client(const std::string &host, int port, const std::string &dbName, std::chrono::milliseconds batchTime,
-                   size_t connPoolSize) : dbName(dbName) {
+                   size_t connPoolSize) : dbName(dbName), connPoolSize(connPoolSize) {
         wsaStart();
         pool = std::make_unique<evpp::httpc::ConnPool>(host, port,
                                                        evpp::Duration(static_cast<double >(RequestTimeoutSeconds)),
@@ -126,9 +129,9 @@ namespace influxdb {
             return a.time[0] < b.time[0];
         });
 
-       // LOG_D << LOG_EXPR(results.size());
+        // LOG_D << LOG_EXPR(results.size());
         // strip overlaps TODO
-        for (auto i = 0; (i+1) < results.size(); ++i) {
+        for (auto i = 0; (i + 1) < results.size(); ++i) {
             if (results[i].time.back() >= results[i + 1].time.front()) {
                 LOG_D << LOG_EXPR(i) << LOG_EXPR(results[i].time.back()) << LOG_EXPR(results[i + 1].time.front())
                       << LOG_EXPR(results[i].time.back() - results[i + 1].time.front());
@@ -170,10 +173,11 @@ namespace influxdb {
         // }
 
         // fill NaNs with previous
-        for(size_t i = 1; i < resultMerged.num; ++i) {
-            for(size_t c = 0; c < resultMerged.dataStride; ++c) {
-                if(std::isnan(resultMerged.data[i*resultMerged.dataStride+c])) {
-                    resultMerged.data[i*resultMerged.dataStride+c] = resultMerged.data[(i-1)*resultMerged.dataStride+c];
+        for (size_t i = 1; i < resultMerged.num; ++i) {
+            for (size_t c = 0; c < resultMerged.dataStride; ++c) {
+                if (std::isnan(resultMerged.data[i * resultMerged.dataStride + c])) {
+                    resultMerged.data[i * resultMerged.dataStride + c] = resultMerged.data[
+                            (i - 1) * resultMerged.dataStride + c];
                 }
             }
         }
@@ -229,6 +233,8 @@ namespace influxdb {
         std::vector<std::string> columns;
         std::vector<fetchResult> results{batches};
 
+        std::mutex mtxColumns;
+
         for (int bi = 0; bi < batches; ++bi) {
             auto bsql = fsql;
             auto bt = batchTime0(t0 + batchTime * bi, batchTime);
@@ -248,42 +254,66 @@ namespace influxdb {
             futs.emplace_back(
                     //false && cache.have(bsql)
                     //? cache.get_async_throw(bsql, results[bi])                  :
-                    queryRaw(bsql, [&columns, &results, bi, bsql /*, &cache*/](const char *body, size_t len) {
-                        rapidjson::Reader reader;
+                    queryRaw(bsql,
+                             [&mtxColumns, &columns, &results, bi, bsql /*, &cache*/]
+                                     (const char *body, size_t len) {
+                                 rapidjson::Reader reader;
 
-                        //LOG_D << "body:" << std::string(body);
+                                 //LOG_D << "body:" << std::string(body);
 
-                        if (columns.size() == 0) {
-                            ColumnReader colsReader;
-                            {
-                                rapidjson::StringStream ss(body);
-                                reader.Parse(ss, colsReader);
-                            }
-                            columns = colsReader.columns;
-                        }
+                                 {
+                                     std::lock_guard<std::mutex> lg{mtxColumns};
+                                     if (columns.size() == 0) {
+                                         ColumnReader colsReader;
+                                         {
+                                             rapidjson::StringStream ss(body);
+                                             reader.Parse(ss, colsReader);
+                                         }
+                                         columns = colsReader.columns;
+                                     }
+                                 }
 
-                        if (columns.size() != 0) {
-                            auto &result(results[bi]);
-                            DataReader dataReader{columns.size(), result};
-                            rapidjson::StringStream ss(body);
-                            reader.Parse(ss, dataReader);
-                            if (result.data.size() % (columns.size() - 1)) {
-                                throw std::runtime_error("unexpected data len");
-                            }
 
-                            result.dataStride = (columns.size() - 1);
-                            result.num = result.data.size() / result.dataStride;
-                            result.columns = columns; // copy for cache
+                                 auto &result(results[bi]);
+                                 DataReader dataReader{columns.size(), result};
+                                 rapidjson::StringStream ss(body);
+                                 reader.Parse(ss, dataReader);
+                                 if (result.data.size() % (columns.size() - 1)) {
+                                     throw std::runtime_error("unexpected data len");
+                                 }
 
-                            if (result.num != result.time.size()) {
-                                throw std::runtime_error("unexpected time len");
-                            }
-                            //cache.set(bsql, result);
-                        }
-                    }));
+                                 result.dataStride = (columns.size() - 1);
+                                 result.num = result.data.size() / result.dataStride;
+                                 result.columns = columns; // copy for cache
+
+                                 if (result.num != result.time.size()) {
+                                     throw std::runtime_error("unexpected time len");
+                                 }
+                                 //cache.set(bsql, result);
+
+                             }));
         }
 
-        for (auto &fut:futs) fut.get();
+
+        std::exception_ptr firstException = nullptr;
+        for (auto &fut:futs) {
+            try {
+                fut.get();
+            } catch (const std::runtime_error &re) {
+                if (!firstException) {
+                    LOG_E << "fetch error: " << re.what();
+                    firstException = std::current_exception();
+                }
+            } catch (...) {
+                if (!firstException) {
+                    firstException = std::current_exception();
+                }
+            }
+        }
+
+        if (firstException) {
+            std::rethrow_exception(firstException);
+        }
 
         return sortedMerge(results);
     }
@@ -330,7 +360,20 @@ namespace influxdb {
         };
          */
 
-        auto handlerArgs = new queryHandlerArgs{sql, {pool.get(), t->loop(), path}, result_promise, callback, 0,};
+        if(numPendingReq >= connPoolSize) {
+            //LOG_W << LOG_EXPR(numPendingReq);
+            // TODO std::condition_variable cv; cv.wait(lk, []{return ready;});
+            while (numPendingReq > connPoolSize/2) {
+                std::this_thread::sleep_for(0.1ms + 0.01ms * (std::rand() % 100));
+            }
+        }
+
+        ++numPendingReq;
+        auto handlerArgs = new queryHandlerArgs{
+                numPendingReq,
+                sql,
+                evpp::httpc::GetRequest {pool.get(), t->loop(), path},
+                result_promise, callback, 0,};
         handlerArgs->req.Execute(std::bind(queryResultHandler, std::placeholders::_1, handlerArgs));
 
         //req->Execute(handler);
@@ -416,6 +459,7 @@ namespace influxdb {
 
                         //  LOG_D << bsql << " resp body len=" << len;
 
+                        throw "fix race condition!";
                         if (columns.size() == 0) {
                             ColumnReader colsReader;
                             {
@@ -449,6 +493,8 @@ namespace influxdb {
         }
 
         for (auto &fut:futs) fut.get();
+
+        throw std::logic_error("need exception handling, see fetch()");
 
         return sortedMergeGrouped(batches, keyFunc);
     }

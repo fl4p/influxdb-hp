@@ -86,7 +86,7 @@ namespace influxdb {
 
         bool Double(double d) {
             if (inDataArray == 3) {
-                if (colIndex > 0) result.data.push_back(d);
+                if (colIndex > 0) result.data.push_back(static_cast<float>(d));
                 else throw std::runtime_error("unexpected double");
                 ++colIndex;
             }
@@ -240,7 +240,7 @@ namespace influxdb {
         bool StartObject() {
             ++lvObjects;
 
-            if(inSeriesArray == SeriesArrayLevelSeries && !currentSeries && lvObjects == SeriesObjectLevel) {
+            if (inSeriesArray == SeriesArrayLevelSeries && !currentSeries && lvObjects == SeriesObjectLevel) {
                 series_.resize(series_.size() + 1);
                 currentSeries = &series_.back();
             }
@@ -252,7 +252,7 @@ namespace influxdb {
         }
 
         bool EndObject(SizeType memberCount) {
-            if(currentSeries && lvObjects == SeriesObjectLevel) {
+            if (currentSeries && lvObjects == SeriesObjectLevel) {
                 currentSeries = nullptr;
             }
 
@@ -275,6 +275,7 @@ namespace influxdb {
 
         bool Double(double d) {
             if (inSeriesArray == SeriesArrayLevelCol) {
+                if (!currentSeries) throw std::runtime_error("unexpected double (currentSeries null)");
                 if (colIndex > 0) currentSeries->data.push_back(d);
                 else throw std::runtime_error("unexpected double");
                 ++colIndex;
@@ -345,7 +346,6 @@ namespace influxdb {
             }
             return true;
         }
-
 
 
     };

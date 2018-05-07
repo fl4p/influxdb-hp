@@ -38,8 +38,12 @@ namespace influxdb {
         std::string dbName;
         std::chrono::milliseconds batchTime;
 
+        size_t connPoolSize;
+        std::atomic<int> numPendingReq{0};
+
     public:
-        client(const std::string &host, int port, const std::string &dbName, std::chrono::milliseconds batchTime = DefaultBatchTime, size_t connPoolSize = DefaultConnPoolSize);
+        client(const std::string &host, int port, const std::string &dbName,
+               std::chrono::milliseconds batchTime = DefaultBatchTime, size_t connPoolSize = DefaultConnPoolSize);
 
         ~client();
 
