@@ -17,6 +17,7 @@ namespace influxdb {
         std::vector<uint64_t> time{};
 
         inline uint64_t t(size_t frame) const { return time[frame]; }
+        inline int64_t tEnd() const { return t(num-1); }
     };
 
     typedef series fetchResult;
