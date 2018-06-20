@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cmath>
 #include "rapidjson/reader.h"
 #include "client.h"
 
@@ -349,4 +350,6 @@ namespace influxdb {
 
 
     };
+
+
 }

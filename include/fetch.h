@@ -7,18 +7,51 @@
 
 
 namespace influxdb {
+    struct series;
+    struct SeriesReader;
+    struct DataReader;
+
+    static std::istream &operator>>(std::istream &s, series &fr);
+
     struct series {
+        friend struct SeriesReader;
+        friend struct DataReader;
+
+        friend std::istream &operator>>(std::istream &s, series &fr);
+
         std::string name{};
         std::unordered_map<std::string, std::string> tags{};
         std::vector<std::string> columns{};
         size_t num{0};
         size_t dataStride{0};
         std::vector<float> data{};
-        std::vector<uint64_t> time{};
+    public:
+        std::vector<int64_t> time{};
 
-        inline uint64_t t(size_t frame) const { return time[frame]; }
-        inline int64_t tEnd() const { return t(num-1); }
+    public:
+
+        inline int64_t t(size_t frame) const { return time[frame]; }
+
+        inline int64_t tEnd() const { return t(num - 1); }
+
+        inline size_t tSize() const { return time.size(); }
+
+        inline bool tIsCompact() const { return time.size() == 2; }
+
+        void joinInner(const series &other);
+
+        size_t fill();
+
+        static series sortedMerge(std::vector<series> &results);
+
+
+        void checkNum() {
+            if (num != time.size()) {
+                throw std::runtime_error("unexpected time len");
+            }
+        }
     };
+
 
     typedef series fetchResult;
 
@@ -40,7 +73,7 @@ namespace influxdb {
         for (auto &col:fr.columns) s << col << " ";
         _write(s, '\n');
         for (size_t i = 0; i < fr.num; ++i) {
-            _write(s, fr.time[i]);
+            _write(s, fr.t(i));
             for (size_t ci = 0; ci < fr.dataStride; ++ci) _write(s, fr.data[i * fr.dataStride + ci]);
         }
         return s;
