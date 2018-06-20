@@ -8,7 +8,7 @@
 
 #include <rapidjson/document.h>
 
-#include "fetch.h"
+#include "series.h"
 #include <unordered_map>
 
 

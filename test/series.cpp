@@ -103,7 +103,7 @@ TEST(InfluxDB, join) {
 TEST(InfluxDBSeries, fill) {
     using namespace influxdb;
 
-    uint64_t si = 100;
+    int64_t si = 100;
 
     series s0;
     // construct sample data
@@ -114,10 +114,10 @@ TEST(InfluxDBSeries, fill) {
             3.0f, 3.4f, 1000.0f
     };
     s0.time = {
-            1000ul,
-            1000ul + si,
+            1000l,
+            1000l + si,
             // 1 sample gap
-            1000ul + 3ul * si
+            1000l + 3l * si
     };
     s0.num = 3;
     s0.dataStride = 3;
@@ -141,7 +141,7 @@ TEST(InfluxDBSeries, fill) {
 TEST(InfluxDBSeries, fill2) {
     using namespace influxdb;
 
-    uint64_t si = 100;
+    int64_t si = 100;
 
     series s0;
     // construct sample data
@@ -152,10 +152,10 @@ TEST(InfluxDBSeries, fill2) {
             3.0f, 3.4f, 1000.0f
     };
     s0.time = {
-            1000ul,
-            1000ul + si,
+            1000l,
+            1000l + si,
             // 2 sample gap
-            1000ul + 4ul * si
+            1000l + 4l * si
     };
     s0.num = 3;
     s0.dataStride = 3;
@@ -173,4 +173,25 @@ TEST(InfluxDBSeries, fill2) {
 
     s0.fill();
     ASSERT_EQ(s0.num, 5);
+}
+
+
+TEST(InfluxDB, trim) {
+    using namespace influxdb;
+    using namespace influxdb::util;
+    using namespace std::chrono_literals;
+
+    client c("localhost", 8086, "test");
+    auto s0 = c.fetch("SELECT last(v) as v FROM load WHERE :time_condition: GROUP BY time(1s) FILL(previous) LIMIT 10",
+                      {"2018-06-19T16:22:26Z", "2018-06-19T16:22:40Z"});
+
+    ASSERT_EQ(s0.num, 10);
+
+    ASSERT_TRUE(std::isnan(s0.data[0]));
+    ASSERT_TRUE(std::isnan(s0.data[1]));
+
+    s0.trim();
+
+    ASSERT_EQ(s0.num, 8);
+    ASSERT_NEAR(s0.data[0], 0.23, 1e-7);
 }

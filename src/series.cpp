@@ -1,6 +1,6 @@
 #include <algorithm>
 #include <cmath>
-#include "../include/fetch.h"
+#include "series.h"
 
 namespace influxdb {
     void series::joinInner(const series &other) {
@@ -147,6 +147,28 @@ namespace influxdb {
         }
 
         return resultMerged;
+    }
+
+    size_t series::trim() {
+        size_t i = 0;
+        for (i = 0; i < num; ++i) {
+            bool hasNan = false;
+            for (size_t c = 0; c < dataStride; ++c) {
+                if (std::isnan(data[i * dataStride + c])) {
+                    hasNan = true;
+                    break;
+                }
+            }
+            if (!hasNan) break;
+        }
+
+        if (i > 0) {
+            num -= i;
+            time.erase(time.begin(), time.begin() + i);
+            data.erase(data.begin(), data.begin() + i * dataStride);
+        }
+
+        return i;
     }
 
 }

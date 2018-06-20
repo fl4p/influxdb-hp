@@ -42,12 +42,22 @@ namespace influxdb {
 
         size_t fill();
 
+        size_t trim();
+
         static series sortedMerge(std::vector<series> &results);
 
 
         void checkNum() {
             if (num != time.size()) {
                 throw std::runtime_error("unexpected time len");
+            }
+
+            if (dataStride != (columns.size() - 1)) {
+                throw std::runtime_error("unexpected columns size");
+            }
+
+            if (num != data.size() / dataStride) {
+                throw std::runtime_error("unexpected data size");
             }
         }
     };
