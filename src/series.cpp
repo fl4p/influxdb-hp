@@ -58,9 +58,10 @@ namespace influxdb {
         auto lastT = t(0);
         for (size_t i = 1; i < num; ++i) {
             auto nIns = (t(i) - lastT) / si - 1;
-            if (nIns) {
+            if (nIns != 0) {
+                if (nIns < 0) throw std::runtime_error("unexpected time jump backwards");
                 // insert repeating previous
-                time.insert(time.begin() + i, nIns, 0);
+                time.insert(time.begin() + i, static_cast<size_t>(nIns), 0);
                 data.insert(data.begin() + i * dataStride, nIns * dataStride, 0.f);
                 for (size_t j = 0; j < nIns; ++j) {
                     time[i + j] = lastT + (1 + j) * si;
@@ -149,6 +150,7 @@ namespace influxdb {
         return resultMerged;
     }
 
+
     size_t series::trim() {
         size_t i = 0;
         for (i = 0; i < num; ++i) {
@@ -170,5 +172,6 @@ namespace influxdb {
 
         return i;
     }
+
 
 }

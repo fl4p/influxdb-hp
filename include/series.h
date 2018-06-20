@@ -1,6 +1,7 @@
 #include <string>
 #include <vector>
 #include <unordered_map>
+#include <cmath>
 
 #include "../../pclog/pclog.h"
 #include "../../pclog/to_string.h"
@@ -30,6 +31,12 @@ namespace influxdb {
 
     public:
 
+        inline void clear() {
+            data.clear();
+            time.clear();
+            num = 0;
+        }
+
         inline int64_t t(size_t frame) const { return time[frame]; }
 
         inline int64_t tEnd() const { return t(num - 1); }
@@ -43,6 +50,23 @@ namespace influxdb {
         size_t fill();
 
         size_t trim();
+
+        template<class F>
+        size_t trim(const F &pred) {
+            size_t i = 0;
+            for (i = 0; i < num; ++i) {
+                if (pred(data.data() + i * dataStride, dataStride))
+                    break;
+            }
+
+            if (i > 0) {
+                num -= i;
+                time.erase(time.begin(), time.begin() + i);
+                data.erase(data.begin(), data.begin() + i * dataStride);
+            }
+
+            return i;
+        }
 
         static series sortedMerge(std::vector<series> &results);
 
