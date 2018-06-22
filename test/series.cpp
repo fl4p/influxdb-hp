@@ -113,7 +113,7 @@ TEST(InfluxDBSeries, fill) {
             // 1 sample gap
             3.0f, 3.4f, 1000.0f
     };
-    s0.time = {
+    s0.getTimeVector() = {
             1000l,
             1000l + si,
             // 1 sample gap
@@ -151,7 +151,7 @@ TEST(InfluxDBSeries, fill2) {
             // 2 sample gap
             3.0f, 3.4f, 1000.0f
     };
-    s0.time = {
+    s0.getTimeVector() = {
             1000l,
             1000l + si,
             // 2 sample gap

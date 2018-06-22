@@ -5,14 +5,12 @@
 namespace influxdb {
     void series::joinInner(const series &other) {
         size_t selfA = 0, otherA = 0;
-        while (other.t(otherA) < t(0)) ++otherA;
+        while (otherA < other.num && other.t(otherA) < t(0)) ++otherA;
+        if (otherA == other.num) throw std::runtime_error("cannot join empty or non-overlapping series!");
         while (other.t(otherA) != t(selfA)) {
             ++selfA;
             if (selfA >= num) throw std::runtime_error("cannot join series with different sampling interval");
         }
-
-
-        std::copy(other.columns.begin() + 1, other.columns.end(), std::back_inserter(columns));
 
         std::vector<float> joint;
         joint.reserve(data.size() + other.data.size());
@@ -30,6 +28,7 @@ namespace influxdb {
         joint.shrink_to_fit();
 
         num = k;
+        std::copy(other.columns.begin() + 1, other.columns.end(), std::back_inserter(columns));
         dataStride += other.dataStride;
         data = std::move(joint);
 
@@ -40,6 +39,7 @@ namespace influxdb {
 
 
     size_t series::fill() {
+        if (num < 2) return 0;
 
         size_t filled = 0;
 
@@ -172,6 +172,76 @@ namespace influxdb {
 
         return i;
     }
+
+    void series::erase(size_t start, size_t count) {
+        //LOG_D << __FUNCTION__ << LOG_EXPR(start) << LOG_EXPR(count);
+
+        if (start + count > num) throw std::logic_error("erase: out of range");
+        num -= count;
+        data.erase(data.begin() + start, data.begin() + (start + count) * dataStride);
+        time.erase(time.begin() + start, time.begin() + (start + count));
+        checkNum();
+    }
+
+    decltype(series::time.begin()) series::insert(size_t start, size_t count) {
+        //LOG_D << __FUNCTION__ << LOG_EXPR(start) << LOG_EXPR(count);
+
+        //if(start < 2) throw std::logic_error("insert: can only insert after first 2 samples");
+        //if(num < 2) throw std::logic_error("insert: series must have at least 2 samples");
+        num += count;
+        data.insert(data.begin() + start, dataStride * count, 0);
+        time.insert(time.begin() + start, count, 0); // todo time compact
+
+        checkNum();
+
+        return time.begin() + start;
+        //auto si = t(1) - t(0);
+        //for (size_t i = 0; i < count; ++i)
+        //    time[start + i] =  i * si;
+    }
+
+    /*
+    void series::equalStartTimes(const std::vector<std::reference_wrapper<series>> &series_, int64_t t) {
+        // slice start
+        for (auto &sr:series_) {
+            series &s{sr.get()};
+            if (s.t(0) < t) {
+                size_t i = 0;
+                while (i < s.time.size() && s.t(i) < t) { ++i; }
+                if (i >= s.num) {
+                    s.num = 0;
+                    s.data.clear();
+                    s.time.clear();
+                } else {
+                    s.num -= i;
+                    s.data.erase(s.data.begin(), s.data.begin() + i * s.dataStride);
+                    s.time.erase(s.time.begin(), s.time.begin() + i);
+                }
+
+                if (s.time.size() != s.num) {
+                    //LOG_D << __FUNCTION__ << LOG_EXPR(s.time.size()) << LOG_EXPR(s.num);
+                    throw std::runtime_error("data time vector corrupt (length)");
+                }
+
+                if (s.num > 0 && s.t(0) != tr[0]) {
+                    //LOG_D << __FUNCTION__ << LOG_EXPR(s.t(0)) << LOG_EXPR(tr[0])
+                    //      << LOG_EXPR(tr[0] - s.t(0));
+                    throw std::runtime_error(p.first + " data time vector corrupt");
+                }
+
+                sliced += i;
+            } else if (s.t(0) > tr[0]) {
+                auto ni = (s.t(0) - tr[0]) / sampling.intervalMs;
+                s.num += ni;
+                s.data.insert(s.data.begin(), s.dataStride * ni, 0);
+                s.time.insert(s.time.begin(), ni, 0); // todo time compact
+                for (size_t i = 0; i < ni; ++i)
+                    s.time[i] = tr[0] + i * sampling.intervalMs;
+                sliced += ni;
+            }
+        }
+    }*/
+
 
 
 }

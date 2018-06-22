@@ -26,16 +26,27 @@ namespace influxdb {
         size_t num{0};
         size_t dataStride{0};
         std::vector<float> data{};
-    public:
+    private:
         std::vector<int64_t> time{};
 
     public:
+
+        inline std::vector<int64_t> &getTimeVector() { return time; }
+
+        inline const std::vector<int64_t> &getTimeVector() const { return time; }
 
         inline void clear() {
             data.clear();
             time.clear();
             num = 0;
         }
+
+
+        void erase(size_t start, size_t count);
+
+        inline void erase(size_t start) { erase(start, num - start); }
+
+        decltype(time.begin()) insert(size_t start, size_t count);
 
         inline int64_t t(size_t frame) const { return time[frame]; }
 
@@ -70,6 +81,8 @@ namespace influxdb {
 
         static series sortedMerge(std::vector<series> &results);
 
+        static void equalStartTimes(const std::vector<std::reference_wrapper<series>> &series, int64_t t);
+
 
         void checkNum() {
             if (num != time.size()) {
@@ -80,7 +93,7 @@ namespace influxdb {
                 throw std::runtime_error("unexpected columns size");
             }
 
-            if (num != data.size() / dataStride) {
+            if (num * dataStride != data.size()) {
                 throw std::runtime_error("unexpected data size");
             }
         }
