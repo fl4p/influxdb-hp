@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <cmath>
+#include <functional>
 #include "series.h"
 
 namespace influxdb {
@@ -35,47 +36,6 @@ namespace influxdb {
         // TODO time compacted!
         time.erase(time.begin(), time.begin() + selfA);
         time.erase(time.begin() + num, time.end());
-    }
-
-
-    size_t series::fill() {
-        if (num < 2) return 0;
-
-        size_t filled = 0;
-
-        // fill NaNs with previous
-        for (size_t i = 1; i < num; ++i) {
-            for (size_t c = 0; c < dataStride; ++c) {
-                if (std::isnan(data[i * dataStride + c])) {
-                    data[i * dataStride + c] = data[(i - 1) * dataStride + c];
-                    ++filled;
-                }
-            }
-        }
-
-        // fill time sampling gaps with previous
-        auto si = t(1) - t(0);
-        auto lastT = t(0);
-        for (size_t i = 1; i < num; ++i) {
-            auto nIns = (t(i) - lastT) / si - 1;
-            if (nIns != 0) {
-                if (nIns < 0) throw std::runtime_error("unexpected time jump backwards");
-                // insert repeating previous
-                time.insert(time.begin() + i, static_cast<size_t>(nIns), 0);
-                data.insert(data.begin() + i * dataStride, nIns * dataStride, 0.f);
-                for (size_t j = 0; j < nIns; ++j) {
-                    time[i + j] = lastT + (1 + j) * si;
-                    for (size_t c = 0; c < dataStride; ++c) {
-                        data[(i + j) * dataStride + c] = data[(i - 1) * dataStride + c];
-                    }
-                }
-                num += nIns;
-                i += nIns;
-                filled += nIns;
-            }
-            lastT = t(i);
-        }
-        return filled;
     }
 
 
@@ -152,25 +112,11 @@ namespace influxdb {
 
 
     size_t series::trim() {
-        size_t i = 0;
-        for (i = 0; i < num; ++i) {
-            bool hasNan = false;
-            for (size_t c = 0; c < dataStride; ++c) {
-                if (std::isnan(data[i * dataStride + c])) {
-                    hasNan = true;
-                    break;
-                }
+        return trim([](const float *d, size_t len) {
+            for (size_t c = 0; c < len; ++c) {
+                if (std::isnan(d[c])) return false;
             }
-            if (!hasNan) break;
-        }
-
-        if (i > 0) {
-            num -= i;
-            time.erase(time.begin(), time.begin() + i);
-            data.erase(data.begin(), data.begin() + i * dataStride);
-        }
-
-        return i;
+        });
     }
 
     void series::erase(size_t start, size_t count) {
@@ -198,6 +144,72 @@ namespace influxdb {
         //auto si = t(1) - t(0);
         //for (size_t i = 0; i < count; ++i)
         //    time[start + i] =  i * si;
+    }
+
+    size_t series::fill(const std::function<bool(const float *, size_t)> &pred) {
+        if (num < 2) return 0;
+
+        size_t filled = 0;
+
+        // fill invalid with previous
+        for (size_t i = 1; i < num; ++i) {
+            if (!pred(&data[i * dataStride], dataStride)) {
+                for (size_t c = 0; c < dataStride; ++c) {
+                    data[i * dataStride + c] = data[(i - 1) * dataStride + c];
+                    ++filled;
+                }
+            }
+        }
+
+        filled += fillTimeGaps();
+
+        return filled;
+    }
+
+    size_t series::fill() {
+        if (num < 2) return 0;
+
+        size_t filled = 0;
+
+        // fill NaNs with previous
+        for (size_t i = 1; i < num; ++i) {
+            for (size_t c = 0; c < dataStride; ++c) {
+                if (std::isnan(data[i * dataStride + c])) {
+                    data[i * dataStride + c] = data[(i - 1) * dataStride + c];
+                    ++filled;
+                }
+            }
+        }
+
+        filled += fillTimeGaps();
+
+        return filled;
+    }
+
+    size_t series::fillTimeGaps() {
+        size_t filled = 0;
+        auto si = t(1) - t(0);
+        auto lastT = t(0);
+        for (size_t i = 1; i < num; ++i) {
+            auto nIns = (t(i) - lastT) / si - 1;
+            if (nIns != 0) {
+                if (nIns < 0) throw std::runtime_error("unexpected time jump backwards");
+                // insert repeating previous
+                time.insert(time.begin() + i, static_cast<size_t>(nIns), 0);
+                data.insert(data.begin() + i * dataStride, nIns * dataStride, 0.f);
+                for (size_t j = 0; j < nIns; ++j) {
+                    time[i + j] = lastT + (1 + j) * si;
+                    for (size_t c = 0; c < dataStride; ++c) {
+                        data[(i + j) * dataStride + c] = data[(i - 1) * dataStride + c];
+                    }
+                }
+                num += nIns;
+                i += nIns;
+                filled += nIns;
+            }
+            lastT = t(i);
+        }
+        return filled;
     }
 
     /*

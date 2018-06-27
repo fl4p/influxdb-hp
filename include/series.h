@@ -58,7 +58,13 @@ namespace influxdb {
 
         void joinInner(const series &other);
 
+        size_t fill(const std::function<bool(const float*row, size_t len)> &pred);
+
         size_t fill();
+
+    private:
+        size_t fillTimeGaps();
+    public:
 
         size_t trim();
 
